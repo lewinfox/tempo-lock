@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -85,6 +86,7 @@ class Track:
         self.analysis: Analysis | None = None
         self.peaks: dict | None = None
         self.rendered: dict | None = None  # {bpm, peaks, grid, mp3, wav}
+        self.info: dict = {}  # ffprobe: tags plus codec/bitrate/sample rate/channels
         self.playback_wav: Path | None = None
         self.downloaded = False
         self.touched = time.monotonic()
@@ -96,6 +98,7 @@ class Track:
             "name": self.name,
             "status": self.status,
             "error": self.error,
+            "info": self.info,
         }
         if self.analysis is not None:
             d["analysis"] = self.analysis.to_dict()
@@ -104,7 +107,7 @@ class Track:
             d["rendered"] = {
                 k: v
                 for k, v in self.rendered.items()
-                if k in ("bpm", "peaks", "grid", "duration")
+                if k in ("bpm", "peaks", "grid", "duration", "bitrate_kbps")
             }
         return d
 
@@ -266,7 +269,15 @@ def _render_job(track: Track, req: RenderRequest):
         wav = track.path.with_name(f"{track.id}_rendered.wav")
         mp3 = track.path.with_name(f"{track.id}_rendered.mp3")
         sf.write(str(wav), z, track.sr, subtype="PCM_16")
-        audio.write_mp3(mp3, z, track.sr, copy_tags_from=track.path, bpm=req.target_bpm)
+        bitrate = audio.mp3_bitrate_for(track.info)
+        audio.write_mp3(
+            mp3,
+            z,
+            track.sr,
+            bitrate_kbps=bitrate,
+            copy_tags_from=track.path,
+            bpm=req.target_bpm,
+        )
         track.rendered = {
             "bpm": req.target_bpm,
             "peaks": waveform_peaks(z),
@@ -274,6 +285,7 @@ def _render_job(track: Track, req: RenderRequest):
             "duration": len(z) / track.sr,
             "wav": wav,
             "mp3": mp3,
+            "bitrate_kbps": bitrate,
         }
         track.downloaded = False
         track.status = "rendered"
@@ -339,6 +351,7 @@ def upload(file: UploadFile = File(...), detector: str = "auto"):
     with open(dest, "wb") as f:
         shutil.copyfileobj(file.file, f)
     track = Track(tid, file.filename or dest.name, dest)
+    track.info = audio.probe(dest)
     TRACKS[tid] = track
     threading.Thread(target=_analyse_job, args=(track, detector), daemon=True).start()
     return {"id": tid, "status": track.status}
@@ -396,12 +409,23 @@ def get_audio(tid: str, which: str):
     raise HTTPException(404)
 
 
+def _download_stem(track: Track) -> str:
+    """Name the download after the tags when the file carries them, the uploaded filename
+    otherwise. Slashes and control characters would break the Content-Disposition header."""
+    tags = track.info.get("tags") or {}
+    stem = (
+        " - ".join(x for x in (tags.get("artist"), tags.get("title")) if x)
+        or Path(track.name).stem
+    )
+    return re.sub(r'[\x00-\x1f/\\:*?"<>|]', "_", stem).strip() or "track"
+
+
 @app.get("/api/tracks/{tid}/download")
 def download(tid: str):
     track = _get(tid)
     if not track.rendered or not track.rendered.get("mp3"):
         raise HTTPException(404)
-    stem = Path(track.name).stem
+    stem = _download_stem(track)
     bpm = track.rendered["bpm"]
 
     def cleanup() -> None:

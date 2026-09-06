@@ -53,6 +53,12 @@ button.busy:disabled { opacity: .85; }
   .spinner { animation-duration: 2.4s; }
   #busy::before { animation: none; width: 100%; opacity: .55; }
 }
+/* ID3 text comes from the uploaded file, so it is escaped before it reaches innerHTML */
+.trackinfo { margin-bottom: 12px; }
+.trackinfo .t { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+.trackinfo .a { color: var(--text); margin-top: 1px; }
+.trackinfo .tech { color: var(--muted); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.trackinfo .untagged { font-style: italic; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .stat { background: #0f1115; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }

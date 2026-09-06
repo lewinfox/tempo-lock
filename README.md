@@ -121,6 +121,30 @@ grid is within ~2 ms (median) of where we said the beats would be.
 MP3 decoders disagree about the encoder delay by ~25 ms, which is enough to make a
 correct grid look wrong, so the browser and the analyser must share one decode.
 
+## Audio quality
+
+The download path is float32 end to end: libsndfile decodes to float, Rubber Band takes a
+`FLOAT` WAV and hands one back, and the encoder gets a `FLOAT` WAV. The 16-bit writes in
+`server.py` are the browser's playback copies and never feed the download.
+
+What you do lose:
+
+- **A second lossy generation.** An MP3 in means an MP3 out, and decode/re-encode always
+  costs something even at a matched bitrate. Nothing avoids this short of a lossless
+  download, which the pipeline could offer unchanged.
+- **Rubber Band's resynthesis.** It is a phase-vocoder-family transform, not a
+  sample-preserving edit. That is the job.
+- **Peak normalisation**, but only when the stretched signal exceeds 0.999.
+
+The output is encoded at the source's own bitrate, snapped to a rate libmp3lame accepts
+(`audio.mp3_bitrate_for`) - a 128 kbps upload comes back at 128 kbps rather than a 320 kbps
+file 2.5x the size and no better. Lossless sources have no MP3 equivalent, so they get 320.
+
+`ffprobe` supplies the track's tags and technical details on upload; the UI shows the title,
+artist, album and year, falling back to the filename when the file carries no tags, and the
+download is named from the tags where they exist. ID3 text is escaped before it reaches the
+DOM - anyone can craft an MP3.
+
 ## Beat tracker research (Sept 2026)
 
 The requirement is offline, per-beat timestamps on music with drifting tempo, ideally

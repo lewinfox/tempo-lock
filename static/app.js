@@ -7,6 +7,10 @@
     return `${m}:${s.toFixed(3).padStart(6, "0")}`;
   };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  // ID3 text is attacker-controlled - anyone can craft an MP3 - so escape before innerHTML
+  const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ESC[c]);
+  const stem = (name) => String(name).replace(/\.[^.\/]+$/, "");
   // Below this many samples per pixel a min/max bar is under a pixel tall, so drawWave
   // switches from the envelope to a line through the samples themselves.
   const ENVELOPE_MIN_SPP = 8;
@@ -661,6 +665,25 @@
     }));
   }
 
+  function showTrackInfo(track) {
+    const info = track.info || {}, tags = info.tags || {};
+    const titled = Boolean(tags.title);
+    const sub = [tags.artist, tags.album, (tags.date || "").slice(0, 4)].filter(Boolean);
+    const rate = info.sample_rate ? info.sample_rate / 1000 : null;
+    const tech = [
+      info.codec && info.codec.toUpperCase().replace(/^PCM_.*/, "PCM"),
+      info.bitrate_kbps && `${info.bitrate_kbps} kbps${info.lossless ? "" : " (source)"}`,
+      rate && `${rate % 1 ? rate.toFixed(1) : rate} kHz`,
+      info.channels && (info.channels === 1 ? "mono" : info.channels === 2 ? "stereo" : `${info.channels} ch`),
+      info.lossless && "lossless",
+    ].filter(Boolean);
+    $("trackinfo").innerHTML =
+      `<div class="t">${esc(titled ? tags.title : stem(track.name))}</div>` +
+      (sub.length ? `<div class="a">${sub.map(esc).join(" · ")}</div>` : "") +
+      (titled ? "" : `<div class="tech untagged">no title tag - showing the filename</div>`) +
+      (tech.length ? `<div class="tech">${tech.map(esc).join(" · ")}</div>` : "");
+  }
+
   function applyAnalysis(track) {
     const a = track.analysis;
     const changes = a.tempo_changes || [];
@@ -677,6 +700,7 @@
       ["Tempo changes", changes.length ? `⚠ ${changes.length}` : "none", changes.length ? "look deliberate" : "drift only", changes.length ? "flag" : ""],
       ["Length", fmtTime(a.duration), ""],
     ].map(([k, v, s, cls]) => `<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`).join("");
+    showTrackInfo(track);
     renderWarning(a);
     $("bpm").value = a.suggested_bpm.toFixed(2).replace(/\.00$/, "");
     $("render").disabled = false;
@@ -715,7 +739,8 @@
     const isDown = g.target_beats.map((_, i) => state.tracks.a.isDown[i]);
     state.tracks.b = { duration: track.rendered.duration, beats: g.target_beats, isDown, barOf: barNumbers(isDown), peaks: track.rendered.peaks };
     $("rendered-card").hidden = false;
-    $("rendered-title").textContent = `${g.target_bpm} BPM · ${fmtTime(track.rendered.duration)} · grid = where each original beat now sits`;
+    const kbps = track.rendered.bitrate_kbps;
+    $("rendered-title").textContent = `${g.target_bpm} BPM · ${fmtTime(track.rendered.duration)}${kbps ? ` · MP3 ${kbps} kbps` : ""} · grid = where each original beat now sits`;
     $("src-b").disabled = false;
     $("download").href = `/api/tracks/${track.id}/download`; $("download").hidden = false;
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
