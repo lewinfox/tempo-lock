@@ -1,0 +1,18 @@
+services:
+  tempo-lock:
+    build: .
+    image: tempo-lock
+    ports:
+      - "8000:8000"
+    environment:
+      # See the Storage section of the README. Defaults are fine locally; the volume is
+      # swept at startup, on download, on a 1 h idle TTL and on a 2 GB cap.
+      - TEMPOLOCK_DATA=/data
+    volumes:
+      # uploads and rendered files; the job table is in memory so a restart forgets tracks
+      # (and clears this volume on the way back up)
+      - tempo-lock-data:/data
+    restart: unless-stopped
+
+volumes:
+  tempo-lock-data:

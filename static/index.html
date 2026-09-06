@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tempo-lock</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>tempo<span>-lock</span></h1>
+  <p class="tagline">Detect the beats in a live-drummed track, then re-time it to a fixed BPM without touching the pitch.</p>
+  <div id="health" class="health"></div>
+</header>
+
+<main>
+  <section id="upload" class="card">
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff,.ogg">
+      <strong>Drop an MP3 here</strong> or click to choose a file
+    </label>
+    <div class="row small">
+      <label>Detector
+        <select id="detector">
+          <option value="auto">auto (Beat This! if installed)</option>
+          <option value="beat_this">Beat This!</option>
+          <option value="librosa">librosa (fallback)</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section id="status" class="card status" hidden></section>
+
+  <section id="result" hidden>
+    <div class="card">
+      <div class="stats" id="stats"></div>
+      <div id="warn" class="warn" hidden></div>
+      <div class="charts">
+        <div class="chart-main">
+          <div class="panel-title">Tempo over time <span class="hint">BPM per beat · dashed = target · shaded bands = sections at a steady tempo</span></div>
+          <canvas id="tempo" class="tempo"></canvas>
+        </div>
+        <div class="chart-side">
+          <div class="panel-title">Beat intervals <span class="hint">histogram of BPM per beat</span></div>
+          <canvas id="hist" class="tempo"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="panel-title">Original <span class="hint">grid = detected beats · thick lines are downbeats · click to seek · wheel to zoom · shift+wheel or drag to pan</span></div>
+      <canvas id="wave-a" class="wave"></canvas>
+      <div class="overview" id="overview-a"></div>
+    </div>
+
+    <div class="card controls">
+      <label>Target BPM
+        <input type="number" id="bpm" step="0.01" min="20" max="400">
+      </label>
+      <button id="bpm-median" class="ghost" title="Median detected tempo">median</button>
+      <button id="bpm-round" class="ghost" title="Round to a whole number">round</button>
+      <label title="If the detector locked onto half- or double-time, say so here and type the real BPM">Detected beats are
+        <select id="level">
+          <option value="1">the beat</option>
+          <option value="2">half-time (×2)</option>
+          <option value="0.5">double-time (÷2)</option>
+        </select>
+      </label>
+      <label>Engine
+        <select id="engine">
+          <option value="r3">Rubber Band R3 (best)</option>
+          <option value="r2">Rubber Band R2 (faster)</option>
+        </select>
+      </label>
+      <button id="render" class="primary">Straighten</button>
+      <span id="render-status" class="hint"></span>
+    </div>
+
+    <div class="card" id="rendered-card" hidden>
+      <div class="panel-title">Straightened <span class="hint" id="rendered-title"></span></div>
+      <canvas id="wave-b" class="wave"></canvas>
+      <div class="overview" id="overview-b"></div>
+    </div>
+
+    <div class="transport card">
+      <button id="play" class="primary big">▶</button>
+      <button id="stop" class="big">■</button>
+      <div class="ab">
+        <button id="src-a" class="toggle on">Original</button>
+        <button id="src-b" class="toggle" disabled>Straightened</button>
+      </div>
+      <label class="check"><input type="checkbox" id="click"> click track on beats</label>
+      <label class="check"><input type="checkbox" id="follow" checked> follow playhead</label>
+      <span id="time" class="time">0:00.000</span>
+      <a id="download" class="button" hidden download>Download MP3</a>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

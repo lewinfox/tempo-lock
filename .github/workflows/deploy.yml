@@ -1,0 +1,134 @@
+name: build-test-deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-entrypoint.sh"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".python-version"
+      - "fly.toml"
+      - "tempolock/**"
+      - "static/**"
+      - "tests/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: tempo-lock
+    outputs:
+      image_ref: ${{ steps.ref.outputs.image_ref }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR refs must be lowercase. github.repository_owner preserves case,
+      # so normalise it here. Expose it as a step output too so the later jobs
+      # can pin to this exact build.
+      - name: Resolve image ref
+        id: ref
+        run: |
+          REF="${REGISTRY}/${OWNER,,}/${IMAGE_NAME}"
+          echo "IMAGE_REF=${REF}" >> "$GITHUB_ENV"
+          echo "image_ref=${REF}" >> "$GITHUB_OUTPUT"
+        env:
+          OWNER: ${{ github.repository_owner }}
+
+      # torch and the baked-in Beat This! checkpoint make this a ~2 GB image and
+      # the runner only has ~14 GB free. Reclaim the preinstalled toolchains.
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_REF }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # amd64 only: fly.io runs amd64, and cross-building torch under QEMU
+          # takes the better part of an hour.
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Run the suite inside the artefact we are about to ship, so this tests the
+      # real rubberband and Beat This! builds rather than a runner-local install.
+      # tests/ is kept out of the image (.dockerignore), so mount it in.
+      - name: Run tests in the built image
+        run: |
+          docker run --rm -v "$PWD/tests:/app/tests:ro" --entrypoint sh \
+            "${IMAGE}@${DIGEST}" -c 'cd /app && python -m pytest tests -q -p no:warnings'
+        env:
+          IMAGE: ${{ needs.publish.outputs.image_ref }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+
+  deploy:
+    needs: [publish, test]
+    runs-on: ubuntu-latest
+    # Only ship from main. The published GHCR package must be public so fly can
+    # pull it without registry credentials.
+    if: github.ref == 'refs/heads/main'
+    concurrency:
+      group: deploy-tempo-lock
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Deploy the exact image this run built and tested, pinned by digest so the
+      # deploy is immutable and can't race a newer push to :latest.
+      - name: Deploy to fly.io
+        run: flyctl deploy --image "${IMAGE}@${DIGEST}"
+        env:
+          IMAGE: ${{ needs.publish.outputs.image_ref }}
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          FLY_API_TOKEN: ${{ secrets.FLY_IO_API_KEY }}

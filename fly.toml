@@ -1,0 +1,44 @@
+# CI builds this image and deploys it by digest (.github/workflows/deploy.yml).
+# To ship from your laptop instead:  fly deploy --dockerfile Dockerfile
+app = "tempo-lock"
+primary_region = "syd"
+
+[build]
+  image = "ghcr.io/lewinfox/tempo-lock:latest"
+
+[env]
+  TEMPOLOCK_DATA = "/data"
+  # Storage guard rails. The volume below is 3 GB; keep the working set well under it.
+  # Rendered MP3s and abandoned uploads are reaped after this many seconds of no access.
+  TEMPOLOCK_TTL_SECONDS = "1800"
+  # Hard cap on bytes under /data. Oldest idle tracks are evicted to stay below it.
+  TEMPOLOCK_MAX_DATA_BYTES = "2147483648"
+  # Reject uploads bigger than this (150 MB) before they hit the volume.
+  TEMPOLOCK_MAX_UPLOAD_BYTES = "157286400"
+  # Delete a track's WAVs as soon as the browser has the rendered MP3. Set to 0 to keep.
+  TEMPOLOCK_DELETE_AFTER_DOWNLOAD = "1"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/api/health"
+
+[[mounts]]
+  source = "tempolock_data"
+  destination = "/data"
+  initial_size = "3gb"
+
+# Beat This! is a torch model and Rubber Band R3 is CPU-hungry; a 1x shared machine
+# takes minutes per track.
+[[vm]]
+  size = "shared-cpu-4x"
+  memory = "4gb"
