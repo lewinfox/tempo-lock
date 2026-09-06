@@ -21,7 +21,7 @@ from starlette.background import BackgroundTask
 
 from . import audio
 from .analysis import Analysis, analyse, waveform_peaks
-from .detectors import beat_this_available
+from .detectors import beat_this_available, beat_this_state, warm_beat_this
 from .render import render, rubberband_binary
 
 log = logging.getLogger(__name__)
@@ -51,6 +51,11 @@ SWEEP_SECONDS = _env_int("TEMPOLOCK_SWEEP_SECONDS", 120)
 MAX_DATA_BYTES = _env_int("TEMPOLOCK_MAX_DATA_BYTES", 2 * 1024**3)
 MAX_UPLOAD_BYTES = _env_int("TEMPOLOCK_MAX_UPLOAD_BYTES", 150 * 1024**2)
 
+# Loading the Beat This! checkpoint takes ~7 s. Doing it at boot means the first upload
+# does not wait for it - and on fly.io the machine wakes on the request that serves the
+# page, so boot and page load are the same moment anyway.
+WARM_MODEL = os.environ.get("TEMPOLOCK_WARM_MODEL", "1") != "0"
+
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
@@ -60,6 +65,8 @@ async def _lifespan(_app: FastAPI):
     if freed:
         log.info("startup sweep freed %d bytes left by a previous run", freed)
     threading.Thread(target=_reaper_loop, daemon=True).start()
+    if WARM_MODEL:
+        threading.Thread(target=warm_beat_this, daemon=True, name="warm-model").start()
     yield
 
 
@@ -283,12 +290,22 @@ def health():
         "beat_this": beat_this_available(),
         "rubberband": rubberband_binary(),
         "ffmpeg": bool(shutil.which("ffmpeg")),
+        "model": beat_this_state(),
         "storage": {
             "used_bytes": _data_bytes(),
             "max_bytes": MAX_DATA_BYTES,
             "tracks": len(TRACKS),
         },
     }
+
+
+@app.post("/api/warm")
+def warm():
+    """Start the model load if it has not started. The page calls this so the wait happens
+    while the user is still choosing a file rather than after they have dropped one."""
+    if beat_this_state() in ("cold", "failed"):
+        threading.Thread(target=warm_beat_this, daemon=True, name="warm-model").start()
+    return {"model": beat_this_state()}
 
 
 _TOO_BIG = "upload larger than {} MB"

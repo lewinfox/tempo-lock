@@ -19,6 +19,9 @@ needs_rubberband = pytest.mark.skipif(
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TEMPOLOCK_DATA", str(tmp_path))
+    monkeypatch.setenv(
+        "TEMPOLOCK_WARM_MODEL", "0"
+    )  # these tests are not about the model
     import importlib
 
     from tempolock import server

@@ -31,8 +31,28 @@ button.ghost { background: transparent; }
 button.big { font-size: 18px; padding: 6px 16px; }
 button.toggle.on { background: var(--accent2); color: #001a26; border-color: transparent; font-weight: 600; }
 .status { color: var(--muted); display: flex; gap: 12px; align-items: center; }
-.spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+/* display matters: a bare <span> is inline, and width/height do not apply to inline
+   boxes, so without this the spinner is invisible anywhere its parent is not a flex
+   container. flex:none stops it being squashed where the parent is one. */
+.spinner { display: inline-block; vertical-align: -2px; flex: none; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.spinner.on-accent { border-color: rgba(0,0,0,.25); border-top-color: #1b1300; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* indeterminate bar across the top of the window whenever a job is in flight - visible
+   even when the control that started it has been scrolled off screen */
+#busy { position: fixed; top: 0; left: 0; right: 0; height: 3px; overflow: hidden; z-index: 50; pointer-events: none; }
+#busy[hidden] { display: none; }
+#busy::before { content: ""; display: block; height: 100%; width: 40%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: sweep 1.1s ease-in-out infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
+
+button.busy { opacity: 1; cursor: progress; }
+button.busy:disabled { opacity: .85; }
+.hint.working { color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation-duration: 2.4s; }
+  #busy::before { animation: none; width: 100%; opacity: .55; }
+}
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px; }
 .stat { background: #0f1115; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }

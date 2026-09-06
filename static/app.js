@@ -535,15 +535,43 @@
   });
 
   // ---------------------------------------------------------------- flow
+  // "loading" is the only state worth animating; the rest are just labels.
+  const MODEL_LABEL = { cold: "not loaded", loading: "loading…", ready: "ready", failed: "failed to load", unavailable: "" };
+
+  function showHealth(h) {
+    const detector = h.beat_this ? "Beat This!" : "librosa fallback";
+    const model = h.model === "loading" ? '<span class="spinner"></span> loading…' : MODEL_LABEL[h.model] ?? h.model;
+    $("health").innerHTML = [
+      `detector: <b>${detector}</b>${model ? ` <span class="${h.model === "failed" ? "bad" : ""}">${model}</span>` : ""}`,
+      `stretcher: <b class="${h.rubberband ? "" : "bad"}">${h.rubberband || "rubberband missing - rendering disabled"}</b>`,
+      `encoder: <b>${h.ffmpeg ? "ffmpeg" : "libsndfile"}</b>`,
+    ].join(" · ");
+  }
+
+  // The server pre-loads the model at boot, but ask anyway: warm-up may be switched off,
+  // and the point is that the ~7 s wait happens while the user is still choosing a file.
   async function health() {
     try {
-      const h = await (await fetch("/api/health")).json();
-      $("health").innerHTML = [
-        `detector: <b>${h.beat_this ? "Beat This!" : "librosa fallback"}</b>`,
-        `stretcher: <b class="${h.rubberband ? "" : "bad"}">${h.rubberband || "rubberband missing - rendering disabled"}</b>`,
-        `encoder: <b>${h.ffmpeg ? "ffmpeg" : "libsndfile"}</b>`,
-      ].join(" · ");
+      let h = await (await fetch("/api/health")).json();
+      showHealth(h);
+      if (h.model === "cold" || h.model === "failed") {
+        await fetch("/api/warm", { method: "POST" }).catch(() => {});
+      } else if (h.model !== "loading") return;
+      for (let i = 0; i < 120; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        h = await (await fetch("/api/health")).json();
+        showHealth(h);
+        if (h.model !== "loading") return;
+      }
     } catch (e) { $("health").textContent = "server unreachable"; }
+  }
+
+  // Any long job raises the bar at the top of the window; jobs can overlap (the audio
+  // fetch outlives the analysis poll), so count them rather than flipping a flag.
+  let busyJobs = 0;
+  function busy(on) {
+    busyJobs = Math.max(0, busyJobs + (on ? 1 : -1));
+    $("busy").hidden = busyJobs === 0;
   }
 
   function status(msg, spin) {
@@ -552,17 +580,35 @@
     el.innerHTML = msg ? `${spin ? '<span class="spinner"></span>' : ""}<span>${msg}</span>` : "";
   }
 
+  function working(el, msg) {
+    el.classList.add("working");
+    el.innerHTML = `<span class="spinner"></span> ${msg}`;
+  }
+  function settled(el, msg) {
+    el.classList.remove("working");
+    el.textContent = msg;
+  }
+
   async function upload(file) {
+    busy(true);
+    try {
+      await runUpload(file);
+    } finally {
+      busy(false);
+    }
+  }
+
+  async function runUpload(file) {
     status(`Uploading ${file.name}…`, true);
     $("result").hidden = true; $("rendered-card").hidden = true;
     pause(); state.tracks = { a: null, b: null }; state.track = null; state.src = "a"; state.pausedAt = 0;
     $("src-a").classList.add("on"); $("src-b").classList.remove("on"); $("src-b").disabled = true; $("download").hidden = true;
-    $("level").value = "1"; $("render-status").textContent = "";
+    $("level").value = "1"; settled($("render-status"), "");
     const fd = new FormData(); fd.append("file", file);
     const res = await fetch(`/api/tracks?detector=${$("detector").value}`, { method: "POST", body: fd });
     if (!res.ok) { status(`Upload failed: ${await res.text()}`); return; }
     const { id } = await res.json();
-    status("Detecting beats… (first run also loads the model)", true);
+    status("Detecting beats…", true);
     const t0 = performance.now();
     // fetch the audio for playback while the server analyses
     state.tracks.a = { duration: 1, beats: null, isDown: null };
@@ -637,19 +683,33 @@
   }
 
   async function renderTrack() {
+    const btn = $("render"), st = $("render-status");
     const bpm = parseFloat($("bpm").value);
-    if (!(bpm >= 20 && bpm <= 400)) { $("render-status").textContent = "BPM must be between 20 and 400"; return; }
-    $("render").disabled = true;
-    $("render-status").innerHTML = '<span class="spinner"></span> stretching with Rubber Band…';
+    if (!(bpm >= 20 && bpm <= 400)) { settled(st, "BPM must be between 20 and 400"); return; }
+    // Rubber Band R3 on a long track is tens of seconds of silence otherwise: put the
+    // work on the button that started it, in the status line, and on the top bar.
+    btn.disabled = true; btn.classList.add("busy");
+    btn.innerHTML = '<span class="spinner on-accent"></span> Straightening…';
+    working(st, "stretching with Rubber Band…");
+    busy(true);
+    try {
+      await runRender(bpm, st);
+    } finally {
+      busy(false);
+      btn.disabled = false; btn.classList.remove("busy"); btn.textContent = "Straighten";
+    }
+  }
+
+  async function runRender(bpm, st) {
     const t0 = performance.now();
     const res = await fetch(`/api/tracks/${state.track.id}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_bpm: bpm, engine: $("engine").value, level: parseFloat($("level").value) }) });
     if (!res.ok) {
       let msg = await res.text();
       try { msg = JSON.parse(msg).detail || msg; } catch (e) {}
-      $("render-status").textContent = msg; $("render").disabled = false; return;
+      settled(st, msg); return;
     }
     const track = await poll(state.track.id, (t) => t.status === "rendered" || t.status === "error");
-    if (track.status === "error") { $("render-status").textContent = `Render failed: ${track.error}`; $("render").disabled = false; return; }
+    if (track.status === "error") { settled(st, `Render failed: ${track.error}`); return; }
     state.track = track;
     const g = track.rendered.grid;
     const isDown = g.target_beats.map((_, i) => state.tracks.a.isDown[i]);
@@ -658,9 +718,10 @@
     $("rendered-title").textContent = `${g.target_bpm} BPM · ${fmtTime(track.rendered.duration)} · grid = where each original beat now sits`;
     $("src-b").disabled = false;
     $("download").href = `/api/tracks/${track.id}/download`; $("download").hidden = false;
-    $("render-status").textContent = `Rendered in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
-    $("render").disabled = false;
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    working(st, "decoding the result…");
     await loadAudio("b", `/api/tracks/${track.id}/audio/rendered`);
+    settled(st, `Rendered in ${secs} s`);
     draw();
   }
 
