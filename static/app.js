@@ -7,6 +7,10 @@
     return `${m}:${s.toFixed(3).padStart(6, "0")}`;
   };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  // Below this many samples per pixel a min/max bar is under a pixel tall, so drawWave
+  // switches from the envelope to a line through the samples themselves.
+  const ENVELOPE_MIN_SPP = 8;
+  const MIN_SPAN = 0.002; // tightest zoom, seconds: ~90 samples across the canvas
   const bsearch = (arr, x) => { // first index with arr[i] >= x
     let lo = 0, hi = arr.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] < x) lo = mid + 1; else hi = mid; }
@@ -197,7 +201,21 @@
     g.fillStyle = wave;
     if (t.pyramid) {
       const p = t.pyramid, sr = p.sr, spp = span * sr / w; // samples per pixel
-      for (let x = 0; x < w; x++) {
+      const sampleAt = (i) => { let v = 0; for (let c = 0; c < p.chans.length; c++) v += p.chans[c][i]; return v / p.chans.length; };
+      const yOf = (v) => mid - v * mid * 0.95;
+      if (spp < ENVELOPE_MIN_SPP) {
+        // Zoomed past a few samples per column a min/max bar has no height left, so the
+        // envelope degenerates into a 1px dotted line. Trace the samples as a connected
+        // curve instead, the way a DAW does, and mark each one once it owns a few pixels.
+        const i0 = Math.max(0, Math.floor(v0 * sr)), i1 = Math.min(p.n - 1, Math.ceil(v1 * sr));
+        g.strokeStyle = wave; g.lineWidth = 1; g.lineJoin = "round"; g.beginPath();
+        for (let i = i0; i <= i1; i++) {
+          const x = (i / sr - v0) / span * w;
+          if (i === i0) g.moveTo(x, yOf(sampleAt(i))); else g.lineTo(x, yOf(sampleAt(i)));
+        }
+        g.stroke();
+        if (spp < 0.34) for (let i = i0; i <= i1; i++) g.fillRect((i / sr - v0) / span * w - 1.5, yOf(sampleAt(i)) - 1.5, 3, 3);
+      } else for (let x = 0; x < w; x++) {
         const s0 = Math.floor((v0 + x / w * span) * sr), s1 = Math.floor((v0 + (x + 1) / w * span) * sr);
         if (s1 < 0 || s0 >= p.n) continue;
         let mn = 1, mx = -1;
@@ -207,12 +225,12 @@
           }
         } else {
           for (let i = Math.max(0, s0); i < Math.min(p.n, Math.max(s0 + 1, s1)); i++) {
-            let v = 0; for (let c = 0; c < p.chans.length; c++) v += p.chans[c][i]; v /= p.chans.length;
+            const v = sampleAt(i);
             if (v < mn) mn = v; if (v > mx) mx = v;
           }
         }
         if (mn > mx) continue;
-        const y0 = mid - mx * mid * 0.95, y1 = mid - mn * mid * 0.95;
+        const y0 = yOf(mx), y1 = yOf(mn);
         g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
       }
     } else if (t.peaks) { // server-side peaks before audio has decoded
@@ -269,7 +287,7 @@
   }
 
   function niceStep(raw) {
-    const steps = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+    const steps = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300];
     for (const s of steps) if (s >= raw) return s;
     return 600;
   }
@@ -458,7 +476,7 @@
 
   function setView(v0, v1, noDraw) {
     const dur = state.tracks.a ? state.tracks.a.duration : 1;
-    let span = clamp(v1 - v0, 0.05, dur);
+    let span = clamp(v1 - v0, Math.min(MIN_SPAN, dur), dur);
     v0 = clamp(v0, 0, Math.max(0, dur - span)); v1 = v0 + span;
     state.view = [v0, v1];
     if (!noDraw) draw();
@@ -503,7 +521,7 @@
       } else {
         const factor = Math.exp(e.deltaY * 0.0015);
         const anchor = state.view[0] + frac * span;
-        const ns = clamp(span * factor, 0.05, state.tracks.a.duration);
+        const ns = clamp(span * factor, MIN_SPAN, state.tracks.a.duration);
         setView(anchor - frac * ns, anchor + (1 - frac) * ns);
       }
     }, { passive: false });
