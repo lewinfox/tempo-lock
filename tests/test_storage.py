@@ -1,15 +1,19 @@
 """The volume must not fill up: files go away when the track is downloaded, expires, or
 when the data dir blows past its cap."""
+
 import time
 from pathlib import Path
 
 import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
-from tempolock.render import rubberband_binary
 from synth import live_drums
 
-needs_rubberband = pytest.mark.skipif(rubberband_binary() is None, reason="rubberband CLI not installed")
+from tempolock.render import rubberband_binary
+
+needs_rubberband = pytest.mark.skipif(
+    rubberband_binary() is None, reason="rubberband CLI not installed"
+)
 
 
 @pytest.fixture()
@@ -34,7 +38,9 @@ def wav_bytes(tmp_path_factory):
 
 
 def _upload(client, wav_bytes):
-    r = client.post("/api/tracks", files={"file": ("drums.wav", wav_bytes, "audio/wav")})
+    r = client.post(
+        "/api/tracks", files={"file": ("drums.wav", wav_bytes, "audio/wav")}
+    )
     assert r.status_code == 200
     tid = r.json()["id"]
     for _ in range(600):
@@ -47,7 +53,10 @@ def _upload(client, wav_bytes):
 
 
 def _render(client, tid, bpm):
-    assert client.post(f"/api/tracks/{tid}/render", json={"target_bpm": bpm}).status_code == 200
+    assert (
+        client.post(f"/api/tracks/{tid}/render", json={"target_bpm": bpm}).status_code
+        == 200
+    )
     for _ in range(600):
         state = client.get(f"/api/tracks/{tid}").json()
         if state["status"] in ("rendered", "error"):
@@ -117,6 +126,8 @@ def test_data_cap_evicts_the_oldest_track(client, wav_bytes, tmp_path):
 
 def test_oversized_upload_is_rejected_and_leaves_nothing_behind(client, tmp_path):
     client.server.MAX_UPLOAD_BYTES = 4096
-    r = client.post("/api/tracks", files={"file": ("big.wav", b"\0" * 200_000, "audio/wav")})
+    r = client.post(
+        "/api/tracks", files={"file": ("big.wav", b"\0" * 200_000, "audio/wav")}
+    )
     assert r.status_code == 413
     assert _files(tmp_path) == []

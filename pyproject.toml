@@ -44,3 +44,7 @@ explicit = true
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }
 torchaudio = { index = "pytorch-cpu" }
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's whole dependency-injection idiom is a call in an argument default (B008).
+extend-immutable-calls = ["fastapi.Depends", "fastapi.File", "fastapi.Form", "fastapi.Query"]

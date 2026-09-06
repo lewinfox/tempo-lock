@@ -1,4 +1,5 @@
 """Audio I/O helpers: decode anything libsndfile/ffmpeg can read, encode MP3 with tags."""
+
 from __future__ import annotations
 
 import shutil
@@ -21,7 +22,19 @@ def load(path: str | Path) -> tuple[np.ndarray, int]:
     # libsndfile could not decode it (e.g. m4a) - go through ffmpeg
     tmp = path.with_suffix(".decoded.wav")
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-f", "wav", "-acodec", "pcm_f32le", str(tmp)],
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-f",
+            "wav",
+            "-acodec",
+            "pcm_f32le",
+            str(tmp),
+        ],
         check=True,
     )
     y, sr = sf.read(str(tmp), always_2d=True, dtype="float32")

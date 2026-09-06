@@ -1,4 +1,5 @@
 """Straighten a synthetic drifting-tempo track and check the output really is on a grid."""
+
 import numpy as np
 import pytest
 from synth import live_drums
@@ -21,7 +22,9 @@ def analysis(track):
 def test_detection_matches_ground_truth(track, analysis):
     _, _, truth = track
     err = np.array([np.abs(analysis.beats - b).min() for b in truth])
-    assert (err < 0.05).mean() > 0.95, f"only {(err < 0.05).mean():.0%} of beats found within 50 ms"
+    assert (err < 0.05).mean() > 0.95, (
+        f"only {(err < 0.05).mean():.0%} of beats found within 50 ms"
+    )
     assert abs(analysis.median_bpm - 120) < 2
     assert analysis.max_bpm - analysis.min_bpm > 5  # the drift is really there
 
@@ -41,7 +44,9 @@ def test_timemap_is_strictly_increasing_without_leading_zero(track, analysis, tm
 def test_beat_level_scales_grid_period(track, analysis):
     y, sr, _ = track
     g1 = build_grid(analysis, 120.0, len(y), sr, level=1.0)
-    g2 = build_grid(analysis, 240.0, len(y), sr, level=2.0)  # detector "found half-time" of a 240 track
+    g2 = build_grid(
+        analysis, 240.0, len(y), sr, level=2.0
+    )  # detector "found half-time" of a 240 track
     np.testing.assert_allclose(g1.target_beats, g2.target_beats)
 
 
@@ -57,7 +62,7 @@ def test_render_produces_regular_grid(track, analysis):
     ibi = np.diff(again.beats) / np.diff(again.beat_index)
     period = 60.0 / target
     assert abs(np.median(ibi) - period) < 0.004
-    assert np.std(ibi) < 0.006, f"IBI std {np.std(ibi)*1000:.1f} ms"
+    assert np.std(ibi) < 0.006, f"IBI std {np.std(ibi) * 1000:.1f} ms"
     assert again.max_bpm - again.min_bpm < 3.0
     # the grid we claim to have produced is where the beats really are
     err = np.array([np.abs(again.beats - g).min() for g in grid.target_beats])
@@ -65,7 +70,9 @@ def test_render_produces_regular_grid(track, analysis):
 
 
 def test_deliberate_tempo_change_is_flagged():
-    y, sr, _ = live_drums(duration=40.0, drift_bpm=2.0, step_at=20.0, step_bpm=20.0, seed=4)
+    y, sr, _ = live_drums(
+        duration=40.0, drift_bpm=2.0, step_at=20.0, step_bpm=20.0, seed=4
+    )
     a = analyse(y, sr, backend="auto")
     assert len(a.tempo_changes) == 1, a.tempo_changes
     c = a.tempo_changes[0]

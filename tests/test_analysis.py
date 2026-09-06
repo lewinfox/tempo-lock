@@ -61,7 +61,10 @@ def test_segment_flags_abrupt_sustained_jump():
     sections, changes = segment_tempo(bpm, times)
     assert len(sections) == 2 and len(changes) == 1
     assert abs(changes[0]["beat"] - 64) <= 2
-    assert abs(changes[0]["from_bpm"] - 120) < 1.5 and abs(changes[0]["to_bpm"] - 140) < 1.5
+    assert (
+        abs(changes[0]["from_bpm"] - 120) < 1.5
+        and abs(changes[0]["to_bpm"] - 140) < 1.5
+    )
     assert changes[0]["kind"] == "tempo change"
     assert abs(sections[0]["end"] - times[changes[0]["beat"]]) < 1e-9
 

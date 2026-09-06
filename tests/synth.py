@@ -1,14 +1,28 @@
 """Synthesise a 'live drummer': kick/snare/hat pattern whose tempo drifts, with known beat times."""
+
 import numpy as np
 
 
-def live_drums(duration=30.0, sr=44100, base_bpm=120.0, drift_bpm=5.0, seed=0, lead_in=0.5, step_at=None, step_bpm=0.0):
+def live_drums(
+    duration=30.0,
+    sr=44100,
+    base_bpm=120.0,
+    drift_bpm=5.0,
+    seed=0,
+    lead_in=0.5,
+    step_at=None,
+    step_bpm=0.0,
+):
     """step_at/step_bpm add a deliberate tempo change: from step_at seconds on, base tempo is base_bpm + step_bpm."""
     rng = np.random.default_rng(seed)
 
     def tempo_at(t):
         base = base_bpm + (step_bpm if step_at is not None and t >= step_at else 0.0)
-        return base + drift_bpm * np.sin(2 * np.pi * t / 25) + 0.4 * drift_bpm * np.sin(2 * np.pi * t / 7.3)
+        return (
+            base
+            + drift_bpm * np.sin(2 * np.pi * t / 25)
+            + 0.4 * drift_bpm * np.sin(2 * np.pi * t / 7.3)
+        )
 
     beats = [lead_in]
     t = lead_in
@@ -32,7 +46,10 @@ def live_drums(duration=30.0, sr=44100, base_bpm=120.0, drift_bpm=5.0, seed=0, l
 
     def snare():
         L = int(0.2 * sr)
-        return rng.normal(0, 1, L) * env(L, 0.05) * 0.5 + np.sin(2 * np.pi * 190 * np.arange(L) / sr) * env(L, 0.03) * 0.4
+        return (
+            rng.normal(0, 1, L) * env(L, 0.05) * 0.5
+            + np.sin(2 * np.pi * 190 * np.arange(L) / sr) * env(L, 0.03) * 0.4
+        )
 
     def hat():
         L = int(0.06 * sr)
@@ -42,7 +59,7 @@ def live_drums(duration=30.0, sr=44100, base_bpm=120.0, drift_bpm=5.0, seed=0, l
         i = int(at * sr)
         L = min(len(sig), n - i)
         if L > 0:
-            y[i:i + L] += sig[:L]
+            y[i : i + L] += sig[:L]
 
     for k, b in enumerate(beats):
         add(kick() if k % 2 == 0 else snare(), b)

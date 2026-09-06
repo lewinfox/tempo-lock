@@ -5,6 +5,7 @@ give it (source_frame -> target_frame) and it varies the stretch ratio smoothly 
 key frames. Pitch is untouched. Audio before the first beat and after the last beat is
 left at ratio 1.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -46,7 +47,9 @@ class Grid:
         }
 
 
-def build_grid(analysis: Analysis, target_bpm: float, n_in: int, sr: int, level: float = 1.0) -> Grid:
+def build_grid(
+    analysis: Analysis, target_bpm: float, n_in: int, sr: int, level: float = 1.0
+) -> Grid:
     """level says how the detected beats relate to the tempo the user is typing:
     1 = the detector found the beat, 2 = it found half-time (detected beats are two
     target beats apart), 0.5 = it found double-time."""
@@ -93,7 +96,9 @@ def render(
         raise ValueError("need at least two beats to build a grid")
     binary = rubberband_binary()
     if binary is None:
-        raise RubberBandMissing("rubberband CLI not found; install rubberband-cli (apt) or brew install rubberband")
+        raise RubberBandMissing(
+            "rubberband CLI not found; install rubberband-cli (apt) or brew install rubberband"
+        )
 
     grid = build_grid(analysis, target_bpm, len(y), sr, level=level)
     with tempfile.TemporaryDirectory(dir=workdir) as td:
@@ -105,11 +110,14 @@ def render(
             binary,
             "-3" if engine == "r3" else "-2",
             "-q",
-            "-M", str(map_txt),
-            "-D", f"{grid.n_out / sr:.6f}",
-            str(src_wav), str(out_wav),
+            "-M",
+            str(map_txt),
+            "-D",
+            f"{grid.n_out / sr:.6f}",
+            str(src_wav),
+            str(out_wav),
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise RuntimeError(f"rubberband failed: {proc.stderr.strip()}")
         z, _ = sf.read(str(out_wav), always_2d=True, dtype="float32")

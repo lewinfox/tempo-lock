@@ -4,6 +4,7 @@ Primary: Beat This! (CPJKU, ISMIR 2024) - transformer beat tracker, robust to te
 outputs beats and downbeats. Fallback: librosa's dynamic-programming tracker, which is
 always installable but assumes a near-constant tempo and knows nothing about downbeats.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,7 +31,7 @@ def beat_this_available() -> bool:
     try:
         import beat_this  # noqa: F401
         import torch  # noqa: F401
-    except Exception:  # pragma: no cover - depends on environment
+    except Exception:  # noqa: BLE001 - any import failure means unavailable  # pragma: no cover
         return False
     return True
 
@@ -45,7 +46,9 @@ def _get_beat_this(checkpoint: str = "final0", dbn: bool = False):
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             log.info("loading Beat This! checkpoint %s on %s", checkpoint, device)
-            _beat_this_model = Audio2Beats(checkpoint_path=checkpoint, device=device, dbn=dbn)
+            _beat_this_model = Audio2Beats(
+                checkpoint_path=checkpoint, device=device, dbn=dbn
+            )
         return _beat_this_model
 
 
@@ -61,7 +64,9 @@ def detect_librosa(mono: np.ndarray, sr: int) -> RawBeats:
     allowed to follow a drifting tempo instead of forcing a fixed one."""
     import librosa
 
-    tempo, beats = librosa.beat.beat_track(y=mono, sr=sr, hop_length=256, tightness=40, units="time", trim=False)
+    _tempo, beats = librosa.beat.beat_track(
+        y=mono, sr=sr, hop_length=256, tightness=40, units="time", trim=False
+    )
     return RawBeats(np.asarray(beats, float), np.array([], float), "librosa")
 
 

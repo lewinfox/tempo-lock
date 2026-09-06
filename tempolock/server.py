@@ -1,4 +1,5 @@
 """FastAPI app: upload a track, analyse it, render it straightened, stream both back."""
+
 from __future__ import annotations
 
 import logging
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -83,12 +84,21 @@ class Track:
         self.lock = threading.Lock()
 
     def public(self) -> dict:
-        d = {"id": self.id, "name": self.name, "status": self.status, "error": self.error}
+        d = {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status,
+            "error": self.error,
+        }
         if self.analysis is not None:
             d["analysis"] = self.analysis.to_dict()
             d["peaks"] = self.peaks
         if self.rendered is not None:
-            d["rendered"] = {k: v for k, v in self.rendered.items() if k in ("bpm", "peaks", "grid", "duration")}
+            d["rendered"] = {
+                k: v
+                for k, v in self.rendered.items()
+                if k in ("bpm", "peaks", "grid", "duration")
+            }
         return d
 
     def files(self) -> list[Path]:
@@ -102,7 +112,11 @@ class Track:
         survives, so the user can still re-render from the samples we already decoded.
         `keep_mp3` spares the rendered MP3 - it is a few MB against ~100 MB of WAVs, and
         keeping it means a second click on the download link still works."""
-        keep = {self.rendered["mp3"]} if keep_mp3 and self.rendered and self.rendered.get("mp3") else set()
+        keep = (
+            {self.rendered["mp3"]}
+            if keep_mp3 and self.rendered and self.rendered.get("mp3")
+            else set()
+        )
         freed = 0
         for p in self.files():
             if p not in keep:
@@ -171,7 +185,9 @@ def _enforce_cap() -> int:
         if _busy(track):
             continue
         freed += _forget(track)
-        log.warning("evicted track %s to stay under the %d byte cap", track.id, MAX_DATA_BYTES)
+        log.warning(
+            "evicted track %s to stay under the %d byte cap", track.id, MAX_DATA_BYTES
+        )
         if used - freed <= MAX_DATA_BYTES:
             break
     return freed
@@ -232,7 +248,14 @@ class RenderRequest(BaseModel):
 def _render_job(track: Track, req: RenderRequest):
     try:
         assert track.y is not None and track.analysis is not None
-        z, grid = render(track.y, track.sr, track.analysis, req.target_bpm, engine=req.engine, level=req.level)
+        z, grid = render(
+            track.y,
+            track.sr,
+            track.analysis,
+            req.target_bpm,
+            engine=req.engine,
+            level=req.level,
+        )
         wav = track.path.with_name(f"{track.id}_rendered.wav")
         mp3 = track.path.with_name(f"{track.id}_rendered.mp3")
         sf.write(str(wav), z, track.sr, subtype="PCM_16")
@@ -260,25 +283,44 @@ def health():
         "beat_this": beat_this_available(),
         "rubberband": rubberband_binary(),
         "ffmpeg": bool(shutil.which("ffmpeg")),
-        "storage": {"used_bytes": _data_bytes(), "max_bytes": MAX_DATA_BYTES, "tracks": len(TRACKS)},
+        "storage": {
+            "used_bytes": _data_bytes(),
+            "max_bytes": MAX_DATA_BYTES,
+            "tracks": len(TRACKS),
+        },
     }
 
 
+_TOO_BIG = "upload larger than {} MB"
+
+
+@app.middleware("http")
+async def _reject_oversized_bodies(request: Request, call_next):
+    """Starlette spools a multipart body to a temp file before the route ever runs, so a
+    size check inside the handler is too late to keep the bytes off the disk. This runs
+    first and turns an oversized request away on its declared length alone."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+        return JSONResponse(
+            {"detail": _TOO_BIG.format(MAX_UPLOAD_BYTES // 1024**2)}, status_code=413
+        )
+    return await call_next(request)
+
+
+# Deliberately sync: FastAPI runs a `def` endpoint in a threadpool, so the file write
+# cannot block the event loop for the length of the upload. Writing from a coroutine
+# would stall every other request, including the polling that keeps the machine awake.
 @app.post("/api/tracks")
-async def upload(file: UploadFile = File(...), detector: str = "auto"):
+def upload(file: UploadFile = File(...), detector: str = "auto"):
+    # Backstop for a chunked request that declared no length for the middleware to see.
+    if (file.size or 0) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, _TOO_BIG.format(MAX_UPLOAD_BYTES // 1024**2))
     _enforce_cap()
     tid = uuid.uuid4().hex[:12]
     suffix = Path(file.filename or "track.mp3").suffix.lower() or ".mp3"
     dest = DATA / f"{tid}{suffix}"
-    written = 0
     with open(dest, "wb") as f:
-        while chunk := await file.read(1 << 20):
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                f.close()
-                _unlink(dest)
-                raise HTTPException(413, f"upload larger than {MAX_UPLOAD_BYTES // 1024**2} MB")
-            f.write(chunk)
+        shutil.copyfileobj(file.file, f)
     track = Track(tid, file.filename or dest.name, dest)
     TRACKS[tid] = track
     threading.Thread(target=_analyse_job, args=(track, detector), daemon=True).start()

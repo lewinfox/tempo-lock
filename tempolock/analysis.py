@@ -1,4 +1,5 @@
 """Turn raw detector output into a clean, indexed beat list plus tempo statistics."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -15,7 +16,9 @@ class Analysis:
     duration: float
     detector: str
     beats: np.ndarray  # refined beat times (s)
-    beat_index: np.ndarray  # integer beat count for each beat (accounts for missed beats)
+    beat_index: (
+        np.ndarray
+    )  # integer beat count for each beat (accounts for missed beats)
     is_downbeat: np.ndarray  # bool per beat
     bpm_times: np.ndarray  # midpoint of each inter-beat interval (s)
     bpm_curve: np.ndarray  # instantaneous BPM per interval
@@ -23,8 +26,12 @@ class Analysis:
     min_bpm: float
     max_bpm: float
     suggested_bpm: float
-    dropped_beats: list = field(default_factory=list)  # spurious detections we discarded (s)
-    sections: list = field(default_factory=list)  # tempo sections split at abrupt jumps (see segment_tempo)
+    dropped_beats: list = field(
+        default_factory=list
+    )  # spurious detections we discarded (s)
+    sections: list = field(
+        default_factory=list
+    )  # tempo sections split at abrupt jumps (see segment_tempo)
     tempo_changes: list = field(default_factory=list)  # the abrupt jumps themselves
 
     def to_dict(self) -> dict:
@@ -35,7 +42,9 @@ class Analysis:
         return d
 
 
-def onset_envelope(mono: np.ndarray, sr: int, hop: int = 256) -> tuple[np.ndarray, np.ndarray]:
+def onset_envelope(
+    mono: np.ndarray, sr: int, hop: int = 256
+) -> tuple[np.ndarray, np.ndarray]:
     import librosa
 
     env = librosa.onset.onset_strength(y=mono, sr=sr, hop_length=hop)
@@ -43,7 +52,9 @@ def onset_envelope(mono: np.ndarray, sr: int, hop: int = 256) -> tuple[np.ndarra
     return env, times
 
 
-def refine_to_onsets(beats: np.ndarray, env: np.ndarray, times: np.ndarray, window: float = 0.035) -> np.ndarray:
+def refine_to_onsets(
+    beats: np.ndarray, env: np.ndarray, times: np.ndarray, window: float = 0.035
+) -> np.ndarray:
     """Beat trackers emit frame-quantised times (Beat This!: 20 ms). Snap each beat to the
     strongest onset within +/-window so the grid lands on the actual drum transient."""
     out = np.empty_like(beats)
@@ -62,7 +73,9 @@ def refine_to_onsets(beats: np.ndarray, env: np.ndarray, times: np.ndarray, wind
     return out
 
 
-def clean_beats(beats: np.ndarray, env: np.ndarray, times: np.ndarray) -> tuple[np.ndarray, np.ndarray, list]:
+def clean_beats(
+    beats: np.ndarray, env: np.ndarray, times: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, list]:
     """Assign an integer beat index to each detection, tolerating both missed beats
     (index jumps by 2+) and spurious extra beats (dropped). Also drops detections that
     sit in near-silence, e.g. a phantom beat at t=0 before the music starts.
@@ -72,7 +85,9 @@ def clean_beats(beats: np.ndarray, env: np.ndarray, times: np.ndarray) -> tuple[
     if len(beats) < 2:
         return beats, np.arange(len(beats)), []
 
-    strength = np.array([env[min(len(env) - 1, int(np.searchsorted(times, b)))] for b in beats])
+    strength = np.array(
+        [env[min(len(env) - 1, int(np.searchsorted(times, b)))] for b in beats]
+    )
     audible = strength > 0.02 * np.max(strength)
     dropped = beats[~audible].tolist()
     beats = beats[audible]
@@ -104,7 +119,7 @@ def _rolling_median(x: np.ndarray, width: int) -> np.ndarray:
     width = min(width, len(x) if len(x) % 2 else len(x) - 1)
     half = width // 2
     pad = np.pad(x, half, mode="edge")
-    return np.array([np.median(pad[i:i + width]) for i in range(len(x))])
+    return np.array([np.median(pad[i : i + width]) for i in range(len(x))])
 
 
 def segment_tempo(
@@ -129,9 +144,22 @@ def segment_tempo(
     n = len(bpm)
     if n < 2 * min_beats:
         med = float(np.median(bpm)) if n else 0.0
-        return ([{"start_beat": 0, "end_beat": n, "start": float(beat_times[0]), "end": float(beat_times[-1]), "bpm": med}] if n else []), []
+        return (
+            [
+                {
+                    "start_beat": 0,
+                    "end_beat": n,
+                    "start": float(beat_times[0]),
+                    "end": float(beat_times[-1]),
+                    "bpm": med,
+                }
+            ]
+            if n
+            else []
+        ), []
 
     smooth = _rolling_median(bpm, 3)  # kills single-beat push/pull
+
     # Discontinuity score at each boundary k: fit a line to the `context` beats on each
     # side and measure the gap between the two lines at the boundary. A gradual ramp has
     # continuous lines (gap ~ 0) however steep it is; a real step shows the whole jump.
@@ -142,12 +170,12 @@ def segment_tempo(
             return float(np.median(seg)), 0.0
         slope, intercept = np.polyfit(x, seg, 1)
         resid = seg - (slope * x + intercept)
-        return float(slope * x_eval + intercept), float(np.sqrt(np.mean(resid ** 2)))
+        return float(slope * x_eval + intercept), float(np.sqrt(np.mean(resid**2)))
 
     cuts = []
     for k in range(min_beats, n - min_beats + 1):
-        before, r1 = fit_at(smooth[k - context:k], context - 0.5)
-        after, r2 = fit_at(smooth[k:k + context], -0.5)
+        before, r1 = fit_at(smooth[k - context : k], context - 0.5)
+        after, r2 = fit_at(smooth[k : k + context], -0.5)
         if before <= 0 or after <= 0:
             continue
         ratio = after / before
@@ -164,7 +192,7 @@ def segment_tempo(
         j = i
         while j + 1 < len(cuts) and cuts[j + 1][0] - cuts[j][0] <= context:
             j += 1
-        k = max(cuts[i:j + 1], key=lambda c: c[1])[0]
+        k = max(cuts[i : j + 1], key=lambda c: c[1])[0]
         if not chosen or k - chosen[-1] >= min_beats:
             chosen.append(k)
         i = j + 1
@@ -174,25 +202,50 @@ def segment_tempo(
     bounds = [0] + chosen + [n]
     sections = []
     changes = []
-    for a, b in zip(bounds, bounds[1:]):
-        sections.append({"start_beat": a, "end_beat": b, "start": float(beat_times[a]), "end": float(beat_times[b]), "bpm": float(np.median(bpm[a:b]))})
+    for a, b in pairwise(bounds):
+        sections.append(
+            {
+                "start_beat": a,
+                "end_beat": b,
+                "start": float(beat_times[a]),
+                "end": float(beat_times[b]),
+                "bpm": float(np.median(bpm[a:b])),
+            }
+        )
     merged = [sections[0]]
     for sec in sections[1:]:
         prev = merged[-1]
         if abs(sec["bpm"] / prev["bpm"] - 1) < jump_frac:
             prev["end_beat"], prev["end"] = sec["end_beat"], sec["end"]
-            prev["bpm"] = float(np.median(bpm[prev["start_beat"]:prev["end_beat"]]))
+            prev["bpm"] = float(np.median(bpm[prev["start_beat"] : prev["end_beat"]]))
         else:
             merged.append(sec)
-    for prev, sec in zip(merged, merged[1:]):
+    for prev, sec in pairwise(merged):
         k = sec["start_beat"]
         ratio = sec["bpm"] / prev["bpm"]
-        kind = "half-time" if abs(ratio - 0.5) < 0.06 else "double-time" if abs(ratio - 2) < 0.12 else "tempo change"
-        changes.append({"beat": k, "time": float(beat_times[k]), "from_bpm": prev["bpm"], "to_bpm": sec["bpm"], "ratio": float(ratio), "kind": kind})
+        kind = (
+            "half-time"
+            if abs(ratio - 0.5) < 0.06
+            else "double-time"
+            if abs(ratio - 2) < 0.12
+            else "tempo change"
+        )
+        changes.append(
+            {
+                "beat": k,
+                "time": float(beat_times[k]),
+                "from_bpm": prev["bpm"],
+                "to_bpm": sec["bpm"],
+                "ratio": float(ratio),
+                "kind": kind,
+            }
+        )
     return merged, changes
 
 
-def analyse(y: np.ndarray, sr: int, backend: str = "auto", raw: RawBeats | None = None) -> Analysis:
+def analyse(
+    y: np.ndarray, sr: int, backend: str = "auto", raw: RawBeats | None = None
+) -> Analysis:
     mono = y.mean(axis=1) if y.ndim == 2 else y
     if raw is None:
         raw = detect(mono, sr, backend=backend)
@@ -232,7 +285,21 @@ def analyse(y: np.ndarray, sr: int, backend: str = "auto", raw: RawBeats | None 
             sections=sections,
             tempo_changes=changes,
         )
-    return Analysis(sr, len(y) / sr, raw.detector, beats, index, is_down, np.array([]), np.array([]), 0.0, 0.0, 0.0, 0.0, dropped)
+    return Analysis(
+        sr,
+        len(y) / sr,
+        raw.detector,
+        beats,
+        index,
+        is_down,
+        np.array([]),
+        np.array([]),
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        dropped,
+    )
 
 
 def waveform_peaks(y: np.ndarray, buckets: int = 4000) -> dict:
@@ -244,7 +311,7 @@ def waveform_peaks(y: np.ndarray, buckets: int = 4000) -> dict:
     mins = np.zeros(buckets, np.float32)
     maxs = np.zeros(buckets, np.float32)
     for i in range(buckets):
-        seg = mono[edges[i]:max(edges[i] + 1, edges[i + 1])]
+        seg = mono[edges[i] : max(edges[i] + 1, edges[i + 1])]
         mins[i] = seg.min()
         maxs[i] = seg.max()
     scale = max(1e-9, float(max(np.abs(mins).max(), np.abs(maxs).max())))
