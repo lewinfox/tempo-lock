@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- metronome: tapered body, scale, pendulum swung to one side with its weight -->
+  <path d="M12.5 3h7l6.5 25h-20z" fill="#ffb454" stroke="#1b1300" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M8 24h16" stroke="#1b1300" stroke-width="1.5"/>
+  <path d="M16 24L23 6" stroke="#1b1300" stroke-width="2" stroke-linecap="round"/>
+  <rect x="17.3" y="12.2" width="4.6" height="3.4" rx=".8" transform="rotate(21 19.6 13.9)" fill="#1b1300"/>
+  <circle cx="16" cy="24" r="1.4" fill="#1b1300"/>
+</svg>

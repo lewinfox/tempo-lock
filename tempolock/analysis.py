@@ -41,6 +41,17 @@ class Analysis:
                 d[k] = v.tolist()
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict) -> Analysis:
+        """Inverse of to_dict, for an analysis saved to disk as JSON."""
+        d = dict(d)
+        d["beats"] = np.asarray(d["beats"], float)
+        d["beat_index"] = np.asarray(d["beat_index"], int)
+        d["is_downbeat"] = np.asarray(d["is_downbeat"], bool)
+        d["bpm_times"] = np.asarray(d["bpm_times"], float)
+        d["bpm_curve"] = np.asarray(d["bpm_curve"], float)
+        return cls(**d)
+
 
 def onset_envelope(
     mono: np.ndarray, sr: int, hop: int = 256
