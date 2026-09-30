@@ -8,15 +8,14 @@ primary_region = "syd"
 
 [env]
   TEMPOLOCK_DATA = "/data"
-  # Storage guard rails. The volume below is 3 GB; keep the working set well under it.
-  # Rendered MP3s and abandoned uploads are reaped after this many seconds of no access.
+  # Storage guard rails. The volume below is 3 GB. Files stay until they are a day old,
+  # or until the disk drops under 10% free, then oldest tracks go first.
+  TEMPOLOCK_MAX_AGE_SECONDS = "86400"
+  TEMPOLOCK_MIN_FREE_FRACTION = "0.10"
+  # Decoded samples of an idle track are dropped from RAM after this; the files stay.
   TEMPOLOCK_TTL_SECONDS = "1800"
-  # Hard cap on bytes under /data. Oldest idle tracks are evicted to stay below it.
-  TEMPOLOCK_MAX_DATA_BYTES = "2147483648"
   # Reject uploads bigger than this (150 MB) before they hit the volume.
   TEMPOLOCK_MAX_UPLOAD_BYTES = "157286400"
-  # Delete a track's WAVs as soon as the browser has the rendered MP3. Set to 0 to keep.
-  TEMPOLOCK_DELETE_AFTER_DOWNLOAD = "1"
 
 [http_service]
   internal_port = 8000

@@ -196,30 +196,40 @@ uv.lock                 the pinned resolution used by dev, Docker and CI alike
 
 ## Storage
 
-One 5-minute track costs roughly 120 MB on disk while you work on it: the upload, a
-decoded WAV the browser plays so its timeline matches the server's, the rendered WAV, and
-the rendered MP3. On a small cloud volume that adds up fast, so the server cleans up after
-itself in four ways:
+Each upload is a **job** with its own folder, `$TEMPOLOCK_DATA/<id>/`:
+
+| File | What it is |
+| --- | --- |
+| `job.json` | Name, ffprobe info, and a summary for the job list |
+| `upload.<ext>` | The file as uploaded |
+| `original.wav` | Decoded copy the browser plays, so its timeline matches the server's |
+| `analysis.json` | Detected beats, tempo stats, waveform peaks |
+| `render.json` | The last straighten: its settings, grid, and the beats detected again in the output |
+| `rendered.wav`, `rendered.mp3` | The straightened audio |
+
+The job list in the page opens any job, and you can straighten it again with other
+settings or detect its beats again (which deletes its old straightened file). A job costs
+roughly 120 MB for a 5-minute track. Jobs survive restarts until one of these happens:
 
 | When | What goes |
 | --- | --- |
-| The browser finishes downloading the rendered MP3 | Every file for that track except the MP3 itself - the WAVs are ~95% of the bytes, and keeping the MP3 means a second click on the download link still works. The page holds its own decoded copies in Web Audio buffers, so playback carries on. |
-| A track goes untouched for `TEMPOLOCK_TTL_SECONDS` | Everything, including the decoded samples held in RAM. This is what catches uploads that are analysed and then abandoned. |
-| `/data` exceeds `TEMPOLOCK_MAX_DATA_BYTES` | Least-recently-touched idle tracks, oldest first, until it is back under the cap. Tracks mid-analysis or mid-render are never evicted. |
-| Startup | The whole data dir. The job table is in memory, so files from a previous process are unreachable anyway. |
+| Nothing in a job has changed for `TEMPOLOCK_MAX_AGE_SECONDS` | That job's folder. |
+| The volume has less than `TEMPOLOCK_MIN_FREE_FRACTION` free | Whole jobs, oldest first, until it is back above the line. |
+
+Jobs mid-analysis or mid-render are never deleted. The check runs at startup, before each
+upload, and every `TEMPOLOCK_SWEEP_SECONDS`. `GET /api/tracks` lists the jobs as JSON.
 
 Uploads bigger than `TEMPOLOCK_MAX_UPLOAD_BYTES` are rejected with a 413 while streaming,
-before the whole body lands on the volume. `GET /api/health` reports current usage, and
-`DELETE /api/tracks/{id}` drops a track on demand.
+before the whole body lands on the volume. `DELETE /api/tracks/{id}` deletes a job.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TEMPOLOCK_DATA` | `./data` | Where uploads and renders live |
-| `TEMPOLOCK_DELETE_AFTER_DOWNLOAD` | `1` | Set to `0` to keep files after download |
-| `TEMPOLOCK_TTL_SECONDS` | `3600` | Idle lifetime of a track |
-| `TEMPOLOCK_MAX_DATA_BYTES` | `2147483648` | Hard cap on `/data` |
+| `TEMPOLOCK_MAX_AGE_SECONDS` | `86400` | Tracks older than this are deleted |
+| `TEMPOLOCK_MIN_FREE_FRACTION` | `0.10` | Delete oldest tracks while free space is below this |
+| `TEMPOLOCK_TTL_SECONDS` | `3600` | Idle time before a track's decoded samples leave RAM (files stay) |
 | `TEMPOLOCK_MAX_UPLOAD_BYTES` | `157286400` | Largest accepted upload |
-| `TEMPOLOCK_SWEEP_SECONDS` | `120` | How often the reaper runs |
+| `TEMPOLOCK_SWEEP_SECONDS` | `120` | How often the cleanup runs |
 
 ## Deploy to Fly.io
 

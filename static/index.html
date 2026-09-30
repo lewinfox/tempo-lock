@@ -16,6 +16,7 @@
 </header>
 
 <main>
+  <div class="col">
   <section id="upload" class="card">
     <label class="drop" id="drop">
       <input type="file" id="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.aiff,.ogg">
@@ -29,6 +30,7 @@
           <option value="librosa">librosa (fallback)</option>
         </select>
       </label>
+      <button id="redetect" class="ghost" hidden title="Run beat detection again on the open job with the detector chosen here">Detect beats again</button>
     </div>
   </section>
 
@@ -84,6 +86,18 @@
       <div class="panel-title">Straightened <span class="hint" id="rendered-title"></span></div>
       <canvas id="wave-b" class="wave"></canvas>
       <div class="overview" id="overview-b"></div>
+      <div class="panel-title measured">Measured on the straightened audio <span class="hint" id="analysis-b-status"></span></div>
+      <div class="stats" id="stats-b"></div>
+      <div class="charts" id="charts-b" hidden>
+        <div class="chart-main">
+          <div class="panel-title">Tempo over time <span class="hint">beats detected again in the output · same scale as the original</span></div>
+          <canvas id="tempo-b" class="tempo"></canvas>
+        </div>
+        <div class="chart-side">
+          <div class="panel-title">Beat intervals <span class="hint">histogram of BPM per beat</span></div>
+          <canvas id="hist-b" class="tempo"></canvas>
+        </div>
+      </div>
     </div>
 
     <div class="transport card">
@@ -98,6 +112,13 @@
       <span id="time" class="time">0:00.000</span>
       <a id="download" class="button" hidden download>Download MP3</a>
     </div>
+  </section>
+  </div>
+
+  <section id="jobs" class="card">
+    <div class="panel-title jobs-head">Jobs <span class="hint" id="jobs-disk"></span>
+      <button id="jobs-refresh" class="ghost">refresh</button></div>
+    <div id="jobs-list" class="jobs-list"></div>
   </section>
 </main>
 <script src="app.js"></script>

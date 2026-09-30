@@ -31,6 +31,8 @@
     playing: false, startCtx: 0, startOffset: 0, pausedAt: 0,
     clickTimer: null, nextBeat: 0,
     raf: 0,
+    renderSeq: 0,           // bumped per render so a stale follow-up poll gives up
+    openSeq: 0,             // bumped per job opened so a stale load gives up
   };
 
   // --------------------------------------------------------- time mapping
@@ -63,9 +65,10 @@
 
   async function loadAudio(which, url) {
     const ctx = ensureCtx();
+    const t = state.tracks[which]; // opening another job replaces this object, so a late result lands nowhere
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`audio ${res.status}`);
     const buf = await ctx.decodeAudioData(await res.arrayBuffer());
-    const t = state.tracks[which];
     t.buffer = buf;
     t.duration = buf.duration;
     t.pyramid = buildPyramid(buf, 256);
@@ -339,28 +342,51 @@
   const SECTION_COLORS = ["rgba(90,209,255,.16)", "rgba(125,255,167,.16)", "rgba(255,93,143,.16)", "rgba(255,180,84,.16)", "rgba(200,140,255,.16)"];
   const SECTION_SOLID = ["#5ad1ff", "#7dffa7", "#ff5d8f", "#ffb454", "#c88cff"];
 
-  function bpmRange(a, target) {
-    let lo = Math.min(a.min_bpm, target), hi = Math.max(a.max_bpm, target);
-    for (const sec of a.sections || []) { lo = Math.min(lo, sec.bpm); hi = Math.max(hi, sec.bpm); }
+  // The charts for the original and the straightened track share their BPM scale, so a
+  // flatter line or a narrower histogram on the second really means a steadier tempo.
+  function analysisOf(which) {
+    const t = state.track;
+    if (!t) return null;
+    const a = which === "a" ? t.analysis : t.rendered && t.rendered.analysis;
+    return a && !a.error && a.bpm_curve && a.bpm_curve.length ? a : null;
+  }
+  function targetOf(which) { // target tempo at the detected beat level
+    if (which === "b") return state.track.rendered.bpm / (state.track.rendered.level || 1);
+    const a = state.track.analysis;
+    return (parseFloat($("bpm").value) || a.suggested_bpm) / (parseFloat($("level").value) || 1);
+  }
+  function charted() { return ["a", "b"].filter((w) => analysisOf(w)).map((w) => [analysisOf(w), targetOf(w)]); }
+
+  function bpmRange() {
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, target] of charted()) {
+      lo = Math.min(lo, a.min_bpm, target); hi = Math.max(hi, a.max_bpm, target);
+      for (const sec of a.sections || []) { lo = Math.min(lo, sec.bpm); hi = Math.max(hi, sec.bpm); }
+    }
     const pad = Math.max(1, (hi - lo) * 0.25);
     return [lo - pad, hi + pad];
   }
 
-  function drawHist() {
-    const cv = $("hist");
+  function histRange() {
+    let lo = Infinity, hi = -Infinity;
+    for (const [a, target] of charted()) {
+      for (const v of a.bpm_curve) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      lo = Math.min(lo, target); hi = Math.max(hi, target);
+    }
+    // bin width: a "nice" number giving ~30 bins across the observed range
+    const bw = niceStep(Math.max(0.1, (hi - lo) / 30));
+    return { lo, hi, bw, b0: Math.floor(lo / bw) - 1, b1: Math.ceil(hi / bw) + 1 };
+  }
+
+  function drawHist(which) {
+    const cv = $(which === "a" ? "hist" : "hist-b");
     const { g, w, h } = setupCanvas(cv);
     g.clearRect(0, 0, w, h);
-    const a = state.track && state.track.analysis;
-    if (!a || !a.bpm_curve.length) return;
-    const level = parseFloat($("level").value) || 1;
-    const target = (parseFloat($("bpm").value) || a.suggested_bpm) / level;
+    const a = analysisOf(which);
+    if (!a) return;
+    const target = targetOf(which);
     const vals = a.bpm_curve;
-    // bin width: a "nice" number giving ~30 bins across the observed range
-    let lo = Infinity, hi = -Infinity;
-    for (const v of vals) { if (v < lo) lo = v; if (v > hi) hi = v; }
-    lo = Math.min(lo, target); hi = Math.max(hi, target);
-    const bw = niceStep(Math.max(0.1, (hi - lo) / 30));
-    const b0 = Math.floor(lo / bw) - 1, b1 = Math.ceil(hi / bw) + 1, nb = b1 - b0;
+    const { lo, hi, bw, b0, b1 } = histRange(), nb = b1 - b0;
     const sections = (a.sections && a.sections.length > 1) ? a.sections : [{ start_beat: 0, end_beat: vals.length }];
     const counts = sections.map(() => new Float64Array(nb));
     sections.forEach((sec, si) => {
@@ -377,7 +403,7 @@
       sections.forEach((_, si) => {
         const c = counts[si][i]; if (!c) return;
         const bh = c / peak * plotH;
-        g.fillStyle = sections.length > 1 ? SECTION_SOLID[si % SECTION_SOLID.length] : color("--wave-a");
+        g.fillStyle = sections.length > 1 ? SECTION_SOLID[si % SECTION_SOLID.length] : color(which === "a" ? "--wave-a" : "--wave-b");
         g.globalAlpha = 0.85;
         g.fillRect(padL + i * colW + 0.5, y - bh, Math.max(1, colW - 1), bh);
         g.globalAlpha = 1;
@@ -402,16 +428,16 @@
     g.textAlign = "left";
   }
 
-  function drawTempo() {
-    const cv = $("tempo");
+  function drawTempo(which) {
+    const cv = $(which === "a" ? "tempo" : "tempo-b");
     const { g, w, h } = setupCanvas(cv);
     g.clearRect(0, 0, w, h);
-    const a = state.track && state.track.analysis;
-    if (!a || !a.bpm_curve.length) return;
-    const level = parseFloat($("level").value) || 1;
-    const target = (parseFloat($("bpm").value) || a.suggested_bpm) / level;
+    const a = analysisOf(which);
+    if (!a) return;
+    const level = which === "a" ? parseFloat($("level").value) || 1 : state.track.rendered.level || 1;
+    const target = targetOf(which);
     const dur = a.duration;
-    const [lo, hi] = bpmRange(a, target);
+    const [lo, hi] = bpmRange();
     const X = (t) => t / dur * w, Y = (b) => h - (b - lo) / (hi - lo) * h;
     // steady-tempo sections (only interesting when there is more than one)
     if (a.sections && a.sections.length > 1) {
@@ -429,11 +455,12 @@
       g.beginPath(); g.moveTo(0, Y(b)); g.lineTo(w, Y(b)); g.stroke();
       g.fillText(b.toFixed(step < 1 ? 1 : 0), 4, Math.max(10, Y(b) - 2));
     }
-    // visible window shading
+    // visible window shading (the view is kept in A time)
+    const v0 = fromA(state.view[0], which), v1 = fromA(state.view[1], which);
     g.fillStyle = "rgba(90,209,255,.07)";
-    g.fillRect(X(state.view[0]), 0, X(state.view[1]) - X(state.view[0]), h);
+    g.fillRect(X(v0), 0, X(v1) - X(v0), h);
     // curve
-    g.strokeStyle = color("--wave-a"); g.lineWidth = 1.5; g.beginPath();
+    g.strokeStyle = color(which === "a" ? "--wave-a" : "--wave-b"); g.lineWidth = 1.5; g.beginPath();
     for (let i = 0; i < a.bpm_curve.length; i++) {
       const x = X(a.bpm_times[i]), y = Y(clamp(a.bpm_curve[i], lo, hi));
       i ? g.lineTo(x, y) : g.moveTo(x, y);
@@ -450,16 +477,17 @@
       g.fillStyle = color("--accent"); g.fillText("⚠", X(c.time), 13);
     }
     g.textAlign = "left";
-    // playhead (in A time)
-    const pos = toA(position(), state.src);
+    // playhead
+    const pos = fromA(toA(position(), state.src), which);
     g.fillStyle = color("--play"); g.fillRect(X(pos) - 0.5, 0, 1.5, h);
   }
 
   function draw() {
-    drawTempo();
-    drawHist();
+    drawTempo("a");
+    drawHist("a");
     drawWave("a");
     if (state.tracks.b) drawWave("b");
+    if (analysisOf("b")) { drawTempo("b"); drawHist("b"); }
     $("time").textContent = fmtTime(position());
   }
 
@@ -531,12 +559,15 @@
     }, { passive: false });
   }
 
-  $("tempo").addEventListener("click", (e) => {
-    const a = state.track && state.track.analysis; if (!a) return;
-    const r = $("tempo").getBoundingClientRect();
-    const tA = (e.clientX - r.left) / r.width * a.duration;
-    seek(fromA(tA, state.src));
-  });
+  for (const which of ["a", "b"]) {
+    const cv = $(which === "a" ? "tempo" : "tempo-b");
+    cv.addEventListener("click", (e) => {
+      const a = analysisOf(which); if (!a) return;
+      const r = cv.getBoundingClientRect();
+      const t = (e.clientX - r.left) / r.width * a.duration;
+      seek(fromA(toA(t, which), state.src));
+    });
+  }
 
   // ---------------------------------------------------------------- flow
   // "loading" is the only state worth animating; the rest are just labels.
@@ -602,30 +633,85 @@
     }
   }
 
-  async function runUpload(file) {
-    status(`Uploading ${file.name}…`, true);
+  // Clear the page for another job.
+  function resetView() {
+    state.openSeq++; state.renderSeq++;
     $("result").hidden = true; $("rendered-card").hidden = true;
     pause(); state.tracks = { a: null, b: null }; state.track = null; state.src = "a"; state.pausedAt = 0;
     $("src-a").classList.add("on"); $("src-b").classList.remove("on"); $("src-b").disabled = true; $("download").hidden = true;
     $("level").value = "1"; settled($("render-status"), "");
+    $("redetect").hidden = true;
+    markOpenJob();
+  }
+
+  async function runUpload(file) {
+    resetView();
+    status(`Uploading ${file.name}…`, true);
     const fd = new FormData(); fd.append("file", file);
     const res = await fetch(`/api/tracks?detector=${$("detector").value}`, { method: "POST", body: fd });
     if (!res.ok) { status(`Upload failed: ${await res.text()}`); return; }
     const { id } = await res.json();
-    status("Detecting beats…", true);
-    const t0 = performance.now();
-    // fetch the audio for playback while the server analyses
+    refreshJobs();
+    await runOpen(id);
+  }
+
+  async function openJob(id) {
+    busy(true);
+    try {
+      await runOpen(id);
+    } finally {
+      busy(false);
+    }
+  }
+
+  // Load a job into the page: its audio, the detected beats and, if it has one, the
+  // straightened version with the settings it was made with.
+  async function runOpen(id) {
+    resetView();
+    const seq = state.openSeq;
+    const stale = () => seq !== state.openSeq;
+    history.replaceState(null, "", `?job=${id}`);
+    state.track = { id };
+    markOpenJob();
+    status("Opening job…", true);
+    let res = await fetch(`/api/tracks/${id}`);
+    if (stale()) return;
+    if (!res.ok) { status("That job is no longer on the server."); history.replaceState(null, "", location.pathname); refreshJobs(); return; }
+    let track = await res.json();
     state.tracks.a = { duration: 1, beats: null, isDown: null };
     const audioP = loadAudio("a", `/api/tracks/${id}/audio/original`).catch(() => {});
-    const track = await poll(id, (t) => t.status === "ready" || t.status === "error");
-    if (track.status === "error") { status(`Analysis failed: ${track.error}`); return; }
+    if (track.status === "analysing") {
+      status("Detecting beats…", true);
+      const t0 = performance.now();
+      track = await poll(id, (t) => t.status !== "analysing");
+      if (stale()) return;
+      if (track.analysis) status(`Analysed in ${((performance.now() - t0) / 1000).toFixed(1)} s with ${track.analysis.detector}.`);
+      refreshJobs();
+    } else status("");
+    $("redetect").hidden = false;
+    if (!track.analysis) { status(`Beat detection failed: ${track.error}. Pick a detector above and click “Detect beats again”.`); return; }
     state.track = track;
     applyAnalysis(track);
-    status(`Analysed in ${((performance.now() - t0) / 1000).toFixed(1)} s with ${track.analysis.detector}.`);
     $("result").hidden = false;
     setView(0, Math.min(track.analysis.duration, 30));
+    const params = track.rendered && track.rendered.params;
+    if (params) {
+      $("bpm").value = params.target_bpm; $("level").value = String(params.level); $("engine").value = params.engine;
+    }
+    if (track.status === "rendering") await renderTrack(true);
+    else if (track.rendered) await showRendered(track);
+    else if (track.status === "error") settled($("render-status"), `Last straighten failed: ${track.error}`);
     await audioP;
     draw();
+  }
+
+  async function redetect() {
+    const id = state.track && state.track.id; if (!id) return;
+    if (state.track.rendered && !confirm("Detecting the beats again deletes this job's straightened file. Carry on?")) return;
+    const res = await fetch(`/api/tracks/${id}/analyse?detector=${$("detector").value}`, { method: "POST" });
+    if (!res.ok) { let msg = await res.text(); try { msg = JSON.parse(msg).detail || msg; } catch (e) {} status(msg); return; }
+    refreshJobs();
+    await openJob(id);
   }
 
   async function poll(id, done) {
@@ -684,6 +770,8 @@
       (tech.length ? `<div class="tech">${tech.map(esc).join(" · ")}</div>` : "");
   }
 
+  const statHtml = ([k, v, s, cls]) => `<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`;
+
   function applyAnalysis(track) {
     const a = track.analysis;
     const changes = a.tempo_changes || [];
@@ -699,17 +787,18 @@
       ["Drift", `±${(spread / 2 / a.median_bpm * 100).toFixed(1)}%`, `${spread.toFixed(1)} BPM spread`],
       ["Tempo changes", changes.length ? `⚠ ${changes.length}` : "none", changes.length ? "look deliberate" : "drift only", changes.length ? "flag" : ""],
       ["Length", fmtTime(a.duration), ""],
-    ].map(([k, v, s, cls]) => `<div class="stat ${cls || ""}"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`).join("");
+    ].map(statHtml).join("");
     showTrackInfo(track);
     renderWarning(a);
     $("bpm").value = a.suggested_bpm.toFixed(2).replace(/\.00$/, "");
     $("render").disabled = false;
   }
 
-  async function renderTrack() {
+  // `resume` picks up a render that was already running when the job was opened.
+  async function renderTrack(resume) {
     const btn = $("render"), st = $("render-status");
     const bpm = parseFloat($("bpm").value);
-    if (!(bpm >= 20 && bpm <= 400)) { settled(st, "BPM must be between 20 and 400"); return; }
+    if (!resume && !(bpm >= 20 && bpm <= 400)) { settled(st, "BPM must be between 20 and 400"); return; }
     // Rubber Band R3 on a long track is tens of seconds of silence otherwise: put the
     // work on the button that started it, in the status line, and on the top bar.
     btn.disabled = true; btn.classList.add("busy");
@@ -717,24 +806,39 @@
     working(st, "stretching with Rubber Band…");
     busy(true);
     try {
-      await runRender(bpm, st);
+      await runRender(bpm, st, resume);
     } finally {
       busy(false);
       btn.disabled = false; btn.classList.remove("busy"); btn.textContent = "Straighten";
     }
   }
 
-  async function runRender(bpm, st) {
+  async function runRender(bpm, st, resume) {
     const t0 = performance.now();
-    const res = await fetch(`/api/tracks/${state.track.id}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_bpm: bpm, engine: $("engine").value, level: parseFloat($("level").value) }) });
-    if (!res.ok) {
-      let msg = await res.text();
-      try { msg = JSON.parse(msg).detail || msg; } catch (e) {}
-      settled(st, msg); return;
+    const id = state.track.id, openSeq = state.openSeq;
+    if (!resume) {
+      const res = await fetch(`/api/tracks/${id}/render`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_bpm: bpm, engine: $("engine").value, level: parseFloat($("level").value) }) });
+      if (!res.ok) {
+        let msg = await res.text();
+        try { msg = JSON.parse(msg).detail || msg; } catch (e) {}
+        settled(st, msg); return;
+      }
+      refreshJobs();
     }
-    const track = await poll(state.track.id, (t) => t.status === "rendered" || t.status === "error");
+    state.renderSeq++;
+    $("charts-b").hidden = true; $("stats-b").innerHTML = "";
+    const track = await poll(id, (t) => t.status !== "rendering");
+    if (openSeq !== state.openSeq) return;
+    refreshJobs();
     if (track.status === "error") { settled(st, `Render failed: ${track.error}`); return; }
     state.track = track;
+    await showRendered(track);
+    if (openSeq === state.openSeq && !resume) settled(st, `Rendered in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+  }
+
+  async function showRendered(track) {
+    const st = $("render-status"), seq = ++state.renderSeq, openSeq = state.openSeq;
+    measureRendered(track.id, seq);
     const g = track.rendered.grid;
     const isDown = g.target_beats.map((_, i) => state.tracks.a.isDown[i]);
     state.tracks.b = { duration: track.rendered.duration, beats: g.target_beats, isDown, barOf: barNumbers(isDown), peaks: track.rendered.peaks };
@@ -743,12 +847,141 @@
     $("rendered-title").textContent = `${g.target_bpm} BPM · ${fmtTime(track.rendered.duration)}${kbps ? ` · MP3 ${kbps} kbps` : ""} · grid = where each original beat now sits`;
     $("src-b").disabled = false;
     $("download").href = `/api/tracks/${track.id}/download`; $("download").hidden = false;
-    const secs = ((performance.now() - t0) / 1000).toFixed(1);
-    working(st, "decoding the result…");
-    await loadAudio("b", `/api/tracks/${track.id}/audio/rendered`);
-    settled(st, `Rendered in ${secs} s`);
+    working(st, "decoding the straightened audio…");
+    try {
+      await loadAudio("b", `/api/tracks/${track.id}/audio/rendered`);
+      if (openSeq === state.openSeq) settled(st, "");
+    } catch (e) { if (openSeq === state.openSeq) settled(st, "could not load the straightened audio"); }
     draw();
   }
+
+  // The server re-detects the beats in the rendered audio after the MP3 is ready, so the
+  // result turns up a little after the render itself.
+  async function measureRendered(id, seq) {
+    const st = $("analysis-b-status");
+    working(st, "detecting beats in the output…");
+    for (;;) {
+      if (seq !== state.renderSeq) return;
+      const a = state.track.rendered && state.track.rendered.analysis;
+      if (a) {
+        if (a.error) { settled(st, `could not measure: ${a.error}`); return; }
+        settled(st, "");
+        showRenderedStats(a);
+        $("charts-b").hidden = false;
+        draw();
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      let t;
+      try { t = await (await fetch(`/api/tracks/${id}`)).json(); } catch (e) { continue; }
+      if (seq !== state.renderSeq) return;
+      if (!t.rendered) { settled(st, ""); return; }
+      state.track.rendered.analysis = t.rendered.analysis;
+    }
+  }
+
+  function showRenderedStats(a) {
+    const target = state.track.rendered.grid.target_beats;
+    // how far each detected beat sits from the grid it was meant to land on
+    const err = a.beats.map((b) => {
+      const i = bsearch(target, b);
+      return Math.min(Math.abs(b - (target[i] ?? Infinity)), Math.abs(b - (target[i - 1] ?? Infinity))) * 1000;
+    }).sort((x, y) => x - y);
+    const pct = (q) => err.length ? err[Math.min(err.length - 1, Math.floor(q * err.length))] : 0;
+    const spread = a.max_bpm - a.min_bpm;
+    $("stats-b").innerHTML = [
+      ["Median tempo", a.median_bpm.toFixed(2), "BPM"],
+      ["Tempo range", `${a.min_bpm.toFixed(1)}–${a.max_bpm.toFixed(1)}`, "BPM, 2nd–98th pct"],
+      ["Drift", `±${(spread / 2 / a.median_bpm * 100).toFixed(1)}%`, `${spread.toFixed(1)} BPM spread`],
+      ["Off the grid", `${pct(0.5).toFixed(0)} ms`, `median · 95% within ${pct(0.95).toFixed(0)} ms`],
+      ["Beats", a.beats.length, `found again of ${target.length}`],
+    ].map(statHtml).join("");
+  }
+
+  // ------------------------------------------------------------ job browser
+  const fmtBytes = (n) => n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`;
+  function fmtAgo(seconds) {
+    const s = Math.max(0, seconds);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min`;
+    if (s < 86400 * 2) return `${Math.round(s / 3600)} h`;
+    return `${Math.round(s / 86400)} d`;
+  }
+  const ENGINE = { r3: "R3", r2: "R2" };
+  const BADGE = {
+    analysing: ["detecting beats", "busy"],
+    rendering: ["straightening", "busy"],
+    measuring: ["measuring", "busy"],
+    ready: ["beats found", ""],
+    rendered: ["straightened", "done"],
+    error: ["failed", "bad"],
+  };
+  let jobsTimer = 0;
+  const LEVEL = { 2: " · half-time", 0.5: " · double-time" };
+
+  // Refreshed on demand and after each upload or render, never on a timer: a poll
+  // would keep the fly.io machine awake for as long as the tab is open.
+  async function refreshJobs() {
+    try {
+      const res = await fetch("/api/tracks");
+      if (!res.ok) throw new Error(res.status);
+      showJobs(await res.json());
+    } catch (e) { $("jobs-list").innerHTML = '<div class="hint">Could not list jobs.</div>'; }
+  }
+
+  function markOpenJob() {
+    const id = state.track && state.track.id;
+    document.querySelectorAll(".job").forEach((el) => el.classList.toggle("current", el.dataset.id === id));
+  }
+
+  function showJobs({ storage: s, jobs }) {
+    const now = Date.now() / 1000;
+    $("jobs-disk").textContent = `${fmtBytes(s.disk_free_bytes)} free of ${fmtBytes(s.disk_total_bytes)} · ` +
+      `jobs are kept ${fmtAgo(s.max_age_seconds)} after their last change, or until the disk is under ${Math.round(s.min_free_fraction * 100)}% free`;
+    const ORDER = ["straightened MP3", "straightened WAV", "upload", "playback WAV", "beat data"];
+    const rank = (k) => { const i = ORDER.indexOf(k); return i < 0 ? ORDER.length : i; };
+    $("jobs-list").innerHTML = jobs.length ? jobs.map((j) => {
+      const links = [...j.files].sort((x, y) => rank(x.kind) - rank(y.kind)).map((f) =>
+        `<span><a class="${f.kind === "straightened MP3" ? "main" : ""}" href="${esc(f.url)}" download="${esc(f.download_name)}" title="${esc(f.download_name)}">${esc(f.kind)}</a><small>${fmtBytes(f.bytes)}</small></span>`).join("");
+      const r = j.render;
+      const summary = [
+        j.median_bpm ? `detected ${j.median_bpm.toFixed(1)} BPM` : "no beats yet",
+        r && `straightened to ${r.target_bpm} BPM (${ENGINE[r.engine] || esc(r.engine)}${LEVEL[r.level] || ""})`,
+      ].filter(Boolean).join(" · ");
+      const [label, kind] = BADGE[j.status] || [j.status || "", ""];
+      return `<div class="job" data-id="${esc(j.id)}" tabindex="0" role="button" title="Open this job">
+        <div class="name">${esc(j.title || stem(j.name))} <span class="badge ${kind}">${kind === "busy" ? '<span class="spinner"></span>' : ""}${label}</span></div>
+        <button class="del ghost" data-del="${esc(j.id)}" title="Delete this job and its files">✕</button>
+        <div class="summary">${summary}</div>
+        <div class="age">uploaded ${fmtAgo(now - j.created)} ago · deleted in ${fmtAgo(j.updated + s.max_age_seconds - now)}</div>
+        <div class="links">${links}</div></div>`;
+    }).join("") : '<div class="hint">No jobs yet. Drop a file above to start one.</div>';
+    markOpenJob();
+    // Keep the badges live only while a job is working. The work keeps the machine
+    // awake anyway, and once it stops the page stops asking.
+    clearTimeout(jobsTimer);
+    if (jobs.some((j) => (BADGE[j.status] || [])[1] === "busy")) jobsTimer = setTimeout(refreshJobs, 3000);
+  }
+
+  $("jobs-list").addEventListener("click", async (e) => {
+    if (e.target.closest("a")) return; // a download link, not a request to open
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      const id = del.dataset.del;
+      if (!confirm("Delete this job and all its files?")) return;
+      const res = await fetch(`/api/tracks/${id}`, { method: "DELETE" });
+      if (!res.ok) { let msg = await res.text(); try { msg = JSON.parse(msg).detail || msg; } catch (err) {} alert(msg); return; }
+      if (state.track && state.track.id === id) { resetView(); status(""); history.replaceState(null, "", location.pathname); }
+      refreshJobs();
+      return;
+    }
+    const job = e.target.closest(".job");
+    if (job && !(state.track && state.track.id === job.dataset.id)) openJob(job.dataset.id);
+  });
+  $("jobs-list").addEventListener("keydown", (e) => {
+    const job = e.target.closest(".job");
+    if (job && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openJob(job.dataset.id); }
+  });
 
   // -------------------------------------------------------------- wiring
   $("file").addEventListener("change", (e) => { if (e.target.files[0]) upload(e.target.files[0]); });
@@ -757,15 +990,16 @@
   ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
   drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) upload(f); });
 
-  $("render").addEventListener("click", renderTrack);
-  $("bpm").addEventListener("input", () => { drawTempo(); drawHist(); });
+  $("render").addEventListener("click", () => renderTrack());
+  $("redetect").addEventListener("click", redetect);
+  $("bpm").addEventListener("input", draw);
   $("level").addEventListener("change", () => {
     const a = state.track && state.track.analysis; if (!a) return;
     $("bpm").value = Math.round(a.median_bpm * parseFloat($("level").value));
-    drawTempo(); drawHist();
+    draw();
   });
-  $("bpm-median").addEventListener("click", () => { $("bpm").value = (state.track.analysis.median_bpm * parseFloat($("level").value)).toFixed(2); drawTempo(); drawHist(); });
-  $("bpm-round").addEventListener("click", () => { $("bpm").value = Math.round(parseFloat($("bpm").value)); drawTempo(); drawHist(); });
+  $("bpm-median").addEventListener("click", () => { $("bpm").value = (state.track.analysis.median_bpm * parseFloat($("level").value)).toFixed(2); draw(); });
+  $("bpm-round").addEventListener("click", () => { $("bpm").value = Math.round(parseFloat($("bpm").value)); draw(); });
   $("play").addEventListener("click", () => { state.playing ? pause() : play(); });
   $("stop").addEventListener("click", () => { pause(); state.pausedAt = 0; draw(); });
   $("src-a").addEventListener("click", () => switchSource("a"));
@@ -778,6 +1012,10 @@
     if (e.key === "b" || e.key === "B") switchSource("b");
   });
   window.addEventListener("resize", draw);
+  $("jobs-refresh").addEventListener("click", refreshJobs);
   wireWave("a"); wireWave("b");
   health();
+  refreshJobs();
+  const linked = /^[0-9a-f]{12}$/.exec(new URLSearchParams(location.search).get("job") || "");
+  if (linked) openJob(linked[0]);
 })();
