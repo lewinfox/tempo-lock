@@ -377,6 +377,10 @@ def _render_job(job: Job, req: RenderRequest):
             bitrate_kbps=bitrate,
             copy_tags_from=job.upload,
             bpm=req.target_bpm,
+            title=audio.straightened(
+                (job.info.get("tags") or {}).get("title") or Path(job.name).stem,
+                req.target_bpm,
+            ),
         )
         rendered = {
             "params": req.model_dump(),
@@ -634,7 +638,7 @@ def _download_name(filename: str, meta: dict) -> str:
     stem = _download_stem(meta.get("name", filename), meta.get("info") or {})
     bpm = (meta.get("render") or {}).get("target_bpm")
     if filename.startswith("rendered.") and bpm:
-        return f"{stem} [{bpm:g} BPM]{Path(filename).suffix}"
+        return f"{audio.straightened(stem, bpm)}{Path(filename).suffix}"
     if filename == "original.wav":
         return f"{stem} (decoded).wav"
     if filename == "analysis.json":

@@ -140,6 +140,12 @@ def write_wav(path: str | Path, y: np.ndarray, sr: int) -> None:
     sf.write(str(path), y, sr, subtype="FLOAT")
 
 
+def straightened(name: str, bpm: float) -> str:
+    """The title and filename stem of a straightened track, so it can't be mistaken for the
+    original in a music library or a downloads folder."""
+    return f"{name} (straightened {bpm:g} bpm)"
+
+
 def write_mp3(
     path: str | Path,
     y: np.ndarray,
@@ -147,8 +153,10 @@ def write_mp3(
     bitrate_kbps: int | None = None,
     copy_tags_from: str | Path | None = None,
     bpm: float | None = None,
+    title: str | None = None,
 ) -> None:
-    """Encode MP3. Prefers ffmpeg/libmp3lame (CBR, tag copy, TBPM tag); falls back to libsndfile.
+    """Encode MP3. Prefers ffmpeg/libmp3lame (CBR, tag copy, TBPM and title tags); falls back
+    to libsndfile, which writes no tags.
 
     bitrate_kbps defaults to matching the source read from `copy_tags_from`, so a 128 kbps
     input does not come back as a 320 kbps file that is 2.5x the size and no better."""
@@ -169,6 +177,8 @@ def write_mp3(
         cmd += ["-c:a", "libmp3lame", "-b:a", f"{bitrate_kbps}k", "-id3v2_version", "3"]
         if bpm is not None:
             cmd += ["-metadata", f"TBPM={bpm:g}"]
+        if title:
+            cmd += ["-metadata", f"title={title}"]
         cmd += [str(path)]
         subprocess.run(cmd, check=True)
         tmp.unlink(missing_ok=True)

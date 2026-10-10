@@ -165,7 +165,7 @@ def test_old_job_can_be_rerun_after_a_restart(client, wav_bytes, tmp_path, monke
         assert again["rendered"]["bpm"] == bpm and again["rendered"]["analysis"]
         r = c.get(f"/api/tracks/{tid}/download")
         assert r.status_code == 200
-        assert f"drums [{bpm} BPM].mp3" in unquote(r.headers["content-disposition"])
+        assert f"drums (straightened {bpm} bpm).mp3" in unquote(r.headers["content-disposition"])
         _render(c, tid, bpm + 1)
         assert c.get("/api/tracks").json()["jobs"][0]["render"]["target_bpm"] == bpm + 1
 
