@@ -57,7 +57,7 @@ Command line:
 
 ```bash
 uv run tempolock analyse track.mp3              # beats, downbeats, tempo stats as JSON
-uv run tempolock render track.mp3               # writes track_124bpm.mp3 at the rounded median tempo
+uv run tempolock render track.mp3               # writes "track (straightened 124 bpm).mp3" at the rounded median tempo
 uv run tempolock render track.mp3 --bpm 124.5 -o out.mp3 --grid grid.json
 uv run tempolock render track.mp3 --level 2     # detector locked onto half-time
 uv run pytest tests                             # ~40 s, synthesises its own test track

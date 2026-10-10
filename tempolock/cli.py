@@ -40,10 +40,18 @@ def cmd_render(args):
     out = (
         Path(args.output)
         if args.output
-        else Path(args.input).with_name(Path(args.input).stem + f"_{bpm:g}bpm.mp3")
+        else Path(args.input).with_name(audio.straightened(Path(args.input).stem, bpm) + ".mp3")
     )
     if out.suffix.lower() == ".mp3":
-        audio.write_mp3(out, z, sr, copy_tags_from=args.input, bpm=bpm)
+        title = audio.probe(args.input).get("tags", {}).get("title") or Path(args.input).stem
+        audio.write_mp3(
+            out,
+            z,
+            sr,
+            copy_tags_from=args.input,
+            bpm=bpm,
+            title=audio.straightened(title, bpm),
+        )
     else:
         audio.write_wav(out, z, sr)
     if args.grid:
@@ -81,7 +89,7 @@ def main(argv=None):
     r.add_argument(
         "-o",
         "--output",
-        help="output file (.mp3 or .wav); default <input>_<bpm>bpm.mp3",
+        help="output file (.mp3 or .wav); default '<input> (straightened <bpm> bpm).mp3'",
     )
     r.add_argument(
         "--bpm",

@@ -107,11 +107,13 @@ def test_written_mp3_matches_the_source_bitrate_and_keeps_the_tags(wav, tmp_path
     src = _encode(wav, tmp_path / "src.mp3", 128, TAGS)
     y, sr = audio.load(src)
     out = tmp_path / "out.mp3"
-    audio.write_mp3(out, y, sr, copy_tags_from=src, bpm=124)
+    audio.write_mp3(
+        out, y, sr, copy_tags_from=src, bpm=124, title=audio.straightened("Slow Burn", 124)
+    )
 
     info = audio.probe(out)
     assert 120 <= info["bitrate_kbps"] <= 136, "re-encoded away from the source bitrate"
-    assert info["tags"]["title"] == "Slow Burn"
+    assert info["tags"]["title"] == "Slow Burn (straightened 124 bpm)"
     assert info["tags"]["artist"] == "The Metronomes"
     # a 320k default would have been ~2.5x the size
     assert out.stat().st_size < src.stat().st_size * 1.4
